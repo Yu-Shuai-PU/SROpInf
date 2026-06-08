@@ -1,18 +1,159 @@
-# Symmetry-Reduced Model Reduction for Shift-Equivariant Systems via Operator Inference
+# SROpInf — Symmetry-Reduced Operator Inference
 
-This repository provides a Python implementation of the **symmetry-reduced operator inference** framework for learning projection-based reduced-order models (ROMs) of shift-equivariant systems—particularly for partial differential equations.
-The framework is **data-driven** and **non-intrusive**, making it a viable candidate for model reduction of "black-box" systems.
+`SROpInf` is a Python package for **symmetry-reduced model reduction of shift-equivariant
+systems via operator inference**. For a 1D periodic PDE whose solutions are dominated by a
+travelling / drifting structure (e.g. a travelling wave), it builds a reduced-order model (ROM)
+that first factors out the continuous translation symmetry and then learns the reduced dynamics in
+the co-moving frame — either **intrusively** (symmetry-reduced POD–Galerkin projection) or
+**non-intrusively** from snapshot data (symmetry-reduced operator inference, S-R OpInf).
 
-Our method builds upon:
+The package accompanies the paper
 
-- **Operator Inference**, as introduced by [Peherstorfer and Willcox (2016)](https://www.sciencedirect.com/science/article/pii/S0045782516301104)
-- **Symmetry reduction techniques**, following [Rowley and Marsden (2000)](https://www.sciencedirect.com/science/article/pii/S0167278900000427).
+> Yu Shuai and Clarence W. Rowley,
+> *Symmetry-reduced model reduction of shift-equivariant systems via operator inference*,
+> arXiv:[2507.18780](https://arxiv.org/abs/2507.18780) (2025).
+> Submitted to *Advances in Computational Mathematics* (in revision).
 
-This work has been submitted to *Advances in Computational Mathematics* and is currently under review. A preprint is available on [arXiv:2507.18780](https://arxiv.org/abs/2507.18780).
+and reproduces all of its Kuramoto–Sivashinsky (KS) numerical experiments.
 
-# Running the codes
+---
 
-To run the demo of building SR-OpInf ROMs on the Kuramoto-Sivashinsky system, please:
+## Method at a glance
 
-- Set the root folder /SROpInf as your working directory
-- Run the ks.py in the subfolder /src
+For a shift-equivariant system the solution `q(x, t)` is decomposed into a **shift amount** `c(t)`
+(the location of the travelling structure) and a **co-moving profile** obtained by aligning each
+snapshot to a fixed template `q_template = cos(2πx/L)` (template fitting). The reduced model then
+evolves
+
+* the reduced co-moving state `z(t)` (POD coefficients of the template-fitted, scaled snapshots), and
+* the scalar shift amount `c(t)` via a reconstruction equation `dc/dt = numerator / denominator`.
+
+Two ways to obtain the reduced operators are provided:
+
+| ROM | Intrusive? | How the reduced operators are obtained |
+|-----|------------|----------------------------------------|
+| **S-R POD–Galerkin** | yes | Galerkin projection of the (scaled, symmetry-reduced) FOM right-hand side onto the POD subspace. |
+| **S-R OpInf** | no | Ridge-regression of reduced polynomial operators to the data; optional **re-projection** for consistency and **penalty (Tikhonov) regularization** for stability. |
+
+Two spatial discretizations are supported, which lets the shift-induced interpolation error be
+assessed directly:
+
+* `Grid1DUniformSpectral` — equispaced spectral grid; the shift and spatial derivatives are **exact**
+  (Fourier), with 3/2-rule dealiasing for the quadratic nonlinearity.
+* `Grid1DCubicSpline` — grid-based discretization; the shift, derivative, and inner-product
+  operators are realized via **periodic cubic-spline interpolation** (hence an additional
+  interpolation error, as encountered when non-intrusiveness is actually relevant).
+
+---
+
+## Repository structure
+
+```
+SROpInf/
+├── pyproject.toml              # package metadata + dependencies (installable, src-layout)
+├── requirements.txt            # runtime deps (see also pyproject.toml)
+├── requirements-dev.txt        # dev/test deps
+├── src/SROpInf/
+│   ├── grids/grid1d.py         # Grid1D base + Grid1DUniformSpectral + Grid1DCubicSpline
+│   │                           #   (inner product, sqrt-mass map R, shift_x, diff_x, fft/ifft)
+│   ├── models/
+│   │   ├── model.py            # FullOrderModel, SymmetryReducedScaledFullOrderModel (.project),
+│   │   │                       #   SymmetryReducedScaledReducedOrderModel (.solve, .sample_and_compare)
+│   │   └── ks.py               # KuramotoSivashinsky equation (polynomial operators)
+│   ├── sr_tools.py             # template_fitting (shift amount c(t)); sropinf (the S-R OpInf
+│   │                           #   regression, with re-projection / grid-search / cross-validation)
+│   ├── mode_decomposition.py   # pod (energy-truncated POD of the symmetry-reduced snapshots)
+│   ├── timestepper.py          # explicit (Euler/RK2/RK4) and semi-implicit (RK2CN/RK3CN) steppers
+│   ├── dataloader.py           # FOMDataloader (loads trajectories / shift amounts from disk)
+│   └── typing.py               # array type aliases
+├── example/ks/
+│   ├── configs.py              # all KS parameters and file paths (single source of truth)
+│   ├── plot.py                 # figure helpers (x–t contours, spatial profiles, error bands, ...)
+│   ├── ks_base_solution.ipynb  # experiment 1: single base travelling-wave solution
+│   └── ks_perturbed_solutions.ipynb  # experiment 2: family of perturbed solutions (+ amplitude sweep)
+└── test/                       # pytest suite (grids + model polynomial composition)
+```
+
+> `output/` (generated trajectories, data, and figures) is **not** tracked — it is fully
+> regenerated by running the example notebooks.
+
+---
+
+## Installation
+
+Requires **Python ≥ 3.10** (developed and tested with Python 3.13).
+
+```bash
+# from the SROpInf/ directory
+python3 -m pip install -e .          # runtime install (numpy, scipy, matplotlib, tqdm)
+python3 -m pip install -e ".[dev]"   # + dev/test extras (pytest, ipywidgets)
+```
+
+The `-e` (editable) install puts the `SROpInf` package on the path so the example notebooks can
+`import SROpInf...` directly. Exact dependency versions are declared in
+[`pyproject.toml`](pyproject.toml).
+
+---
+
+## Reproducing the paper experiments
+
+The experiments live in [`example/ks/`](example/ks/). Run the notebooks top-to-bottom:
+
+### 1. Base travelling-wave solution — `ks_base_solution.ipynb`
+Reconstruction (train = test) of a single KS travelling-wave solution. Builds the symmetry-reduced
+POD subspace and compares **S-R POD–Galerkin** against **S-R OpInf** (plain, re-projected, and
+penalty-regularized), on **both** the spectral and the cubic-spline grids — quantifying the effect
+of the shift-induced interpolation error.
+
+### 2. Perturbed solutions — `ks_perturbed_solutions.ipynb`
+Generalization across a family of solutions: trains on perturbed initial conditions and evaluates on
+a disjoint, held-out testing set. Includes a **perturbation-amplitude sweep**: per-trajectory testing
+errors are written to `output/<case>/sweep_rRMSE/` and the final cell aggregates them into a box-plot
+of testing error vs. perturbation amplitude.
+
+### Configuration
+All parameters and paths are centralized in [`example/ks/configs.py`](example/ks/configs.py):
+
+* `type_traj_training` — `"base_solution"` or `"perturbed_solutions"`.
+* physical / discretization — `Lx = 2π`, `nx = 256`, `nu = 4/87`, `T = 10`, `dt = 1e-3`.
+* ROM — `poly_comp = [1, 2]` (linear + quadratic), `pod_energy_threshold`, the OpInf
+  `penalty_weight_*` (Tikhonov penalties on the inferred operators), and
+  `shift_speed_denom_threshold` (regularizes the shift-reconstruction denominator).
+
+The output directory defaults to `output/ks_multiple_solutions/` and can be overridden with the
+`NISRH_OUTPUT_DIR` environment variable. Each notebook's first cell `assert`s that `configs` points
+at the matching output folder and trajectory type, to prevent accidentally mixing cases.
+
+---
+
+## Tests
+
+```bash
+python3 -m pytest            # from the SROpInf/ directory
+```
+
+The suite checks the grid operators (spectral vs. cubic-spline shift / derivative, inner products)
+and the polynomial-composition machinery of the model class.
+
+---
+
+## Citation
+
+If you use this code, please cite the accompanying paper:
+
+```bibtex
+@misc{shuai2025symmetryreduced,
+  title         = {Symmetry-reduced model reduction of shift-equivariant systems via operator inference},
+  author        = {Shuai, Yu and Rowley, Clarence W.},
+  year          = {2025},
+  eprint        = {2507.18780},
+  archivePrefix = {arXiv},
+  primaryClass  = {math.NA},
+  note          = {Submitted to Advances in Computational Mathematics (in revision)},
+  url           = {https://arxiv.org/abs/2507.18780}
+}
+```
+
+## License
+
+Released under the MIT License (see [LICENSE](LICENSE)).

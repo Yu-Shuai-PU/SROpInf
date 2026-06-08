@@ -1,4 +1,1 @@
-from .model import *
-from .sample import *
-from .timestepper import *
-from .train import *
+"""SROpInf: Symmetry-Reduced Operator Inference for 1D periodic PDEs."""

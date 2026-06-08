@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "SROpInf"
+version = "0.1.0"
+description = "Symmetry-Reduced Operator Inference for 1D periodic PDEs (SR-OpInf)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "Yu Shuai", email = "ys5910@princeton.edu" },
+    { name = "Clarence W. Rowley" },
+]
+dependencies = [
+    "numpy>=1.23",
+    "scipy>=1.10",
+    "matplotlib>=3.6",
+    "tqdm>=4.65",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "ipywidgets>=8.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["SROpInf*"]

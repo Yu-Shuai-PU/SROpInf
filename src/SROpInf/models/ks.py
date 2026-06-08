@@ -1,124 +1,70 @@
-"""Kuramoto-Sivashinsky equation"""
-
-from typing import Callable, Union
+"""
+ks.py --- source code for the Kuramoto-Sivashinsky equation class on the 1D periodic grid with different shift/interpolation/spatial derivative operators
+"""
 
 import numpy as np
-import scipy as sp
+from typing import Union
+from SROpInf.typing import Vector, Matrix
+from SROpInf.grids.grid1d import Grid1DUniformSpectral, Grid1DCubicSpline
+from SROpInf.models.model import FullOrderModel
 
-from numpy.typing import ArrayLike
-from ..model import BilinearModel
-from ..custom_typing import Vector
-
-__all__ = ["KuramotoSivashinsky", "freq_to_space", "space_to_freq", "spatial_translation"]
-
-def freq_to_space(u_hat: Vector) -> Vector:
-    
-    N = len(u_hat) // 2
-        
-    return np.fft.ifft(np.fft.ifftshift(u_hat)).real * 2 * N
-
-def space_to_freq(u: Vector) -> Vector:
-
-    N = len(u) // 2
-
-    u_freq = np.fft.fftshift(np.fft.fft(u)) / (2 * N)
-    # if there are even number of Fourier modes, we will have only one Nyquist frequency mode
-    # to keep the solution real-valued, we truncate this Nyquist frequency mode
-    if len(u_freq) % 2 == 0: 
-        u_freq[0] = 0
-
-    return u_freq
-
-def spatial_translation(u: Vector, c: float, Lx: float) -> Vector:
-
-    # This function converts a given spatial function q(x) to q(x + c) by manipulating the Fourier coefficients
-    
-    u_hat = space_to_freq(u)
-    
-    N = len(u_hat) // 2
-
-    mode_index = np.linspace(-N, N-1, 2 * N, dtype=int, endpoint=True)
-
-    u_shifted_hat = u_hat * np.exp(1j * c * (2*np.pi/Lx) * mode_index)
-
-    return freq_to_space(u_shifted_hat)
-
-class KuramotoSivashinsky(BilinearModel):
-    r"""Kuramoto-Sivashinsky equation
-
-    u_t + u u_x + u_xx + u_xxxx = 0
-
-    with periodic boundary conditions, for 0 <= x <= L
-    The equation is solved using a dealiased pseudo-spectral method
+class KuramotoSivashinsky(FullOrderModel):
+    """Class for the Kuramoto-Sivashinsky equation on the 1D periodic grid with different shift/interpolation/spatial derivative operators.
+    u_t + u u_x + u_xx + nu u_xxxx = 0
+    Since the primal variable is u, and the energy-based inner product is based only on L2 norm:
+    <u, u>_E = <u, u>_L2,
+    we can use the same inner product defined on the grid class
+    so we don't need to override the 'inner_product' or the 'apply_sqrt_inner_product_mass' method from the base 'FullOrderModel' class.
     """
+    def __init__(self,
+                grid: Union[Grid1DUniformSpectral, Grid1DCubicSpline],
+                nu: float):
+        # IMPORTANT: populate poly_operators BEFORE super().__init__() so that
+        # FullOrderModel.__init__ caches num_poly_terms = len(poly_operators) correctly.
+        # Otherwise num_poly_terms stays at 0 and rhs() returns all zeros.
 
-    def __init__(self, nu: float, N: int, L: float):
-        """summary here
-
-        Args:
-            N: Number of collocation points (must be even)
-            L: Length of domain
-        """
-        self.nmodes = N // 2 # number of Fourier modes: from 0, 1, ..., to N//2 (Nyquist frequency)
-        self.L = L
         self.nu = nu
-        self.mode_index = np.linspace(-self.nmodes, self.nmodes-1, 2 * self.nmodes, dtype = int, endpoint = True)
-        self.k = 2 * np.pi / L * self.mode_index
-        self._deriv_factor = 1j * self.k
-        self._linear_factor = - self._deriv_factor ** 2 - self.nu * self._deriv_factor ** 4
-        
-    def derivative(self, u: Union[Vector, ArrayLike], order: int = 1) -> Vector:
-        """Compute the nth derivative of u(x) via FFT"""
-        if u.ndim == 1: # u is a vector of Nx shape
-            return freq_to_space(self._deriv_factor ** order * space_to_freq(u))
-        elif u.ndim == 2: # u is a matrix of shape (Nx, M), we apply the derivative to each column
-            return np.apply_along_axis(lambda col: freq_to_space(self._deriv_factor ** order * space_to_freq(col)), axis=0, arr=u)
+        # when nu = 4/87, Lx = 2 pi,
+        # the KS equation exhibits traveling beating waves after t = 120,
+        # when starting from sine and cosine perturbations at t = 0.
+        self.poly_operators = {
+            1: self._linear,
+            2: self._bilinear,
+        }
+        super().__init__(grid)
+        # Precompute the 3/2-rule zero-padding constants used by _bilinear on spectral grids
+        # (Orszag 1971). Cubic-spline grid has no Fourier representation, so the spline branch
+        # of _bilinear stays a plain nodal product.
+        if hasattr(self.grid, "kx"):
+            self.grid_pad = Grid1DUniformSpectral(self.grid.Lx, 3 * self.grid.nx // 2)
         else:
-            raise ValueError("Input u must be a 1D or 2D array-like object.")
+            self.grid_pad = None
+
+    def _linear(self, q: Union[Vector, Matrix]) -> Union[Vector, Matrix]:
+        """Evaluate the linear operator -u_xx - nu u_xxxx on each column of q,
+        where q has shape (nx, M) with M columns representing M vectorized states,
+        or q has shape (nx,) representing a single state."""
+        return -1 * self.grid.diff_x(q, order = 2) - self.nu * self.grid.diff_x(q, order = 4)
+
+    def _bilinear(self, q1: Union[Vector, Matrix], q2: Union[Vector, Matrix]) -> Union[Vector, Matrix]:
+        """Evaluate the symmetrized bilinear operator -0.5 * (u1 u2_x + u2 u1_x).
+
+        On a spectral grid, the nodal product u * u_x aliases (high modes wrap back into the
+        linearly unstable band of KS, causing blow-up). We therefore use Orszag's 3/2-rule
+        zero-padding (Orszag 1971): zero-pad the Fourier coefficients of u1, u2 to length 3N/2,
+        do the multiplication in the finer physical space, then FFT back and truncate to N modes.
+        This is exactly alias-free for the lower-N output modes.
+
+        On a cubic-spline grid the multiplication is performed directly in nodal space
+        (no analogous Fourier-aliasing concern applies)."""
+        if q1.shape != q2.shape:
+            raise ValueError(f"q1 and q2 must have the same shape, got {q1.shape} and {q2.shape}")
+        if self.grid_pad is None:
+            return -0.5 * (q1 * self.grid.diff_x(q2, order=1) + q2 * self.grid.diff_x(q1, order=1))
+        else:
+            q1_pad, q2_pad = self.grid.pad(q1), self.grid.pad(q2) # step a
+            output_pad = -0.5 * (q1_pad * self.grid_pad.diff_x(q2_pad, order=1) + q2_pad * self.grid_pad.diff_x(q1_pad, order=1))
+            output_truncated = self.grid.truncate(output_pad) # step c
+            return output_truncated
         
-    def get_solver(self, alpha: float) -> Callable[[Vector], Vector]:
-        def solver(rhs: Vector) -> Vector:
-            return freq_to_space(space_to_freq(rhs) / (1 - alpha * self._linear_factor))
-
-        return solver
     
-    @property
-    def constant(self) -> Vector:
-        """Return the constant term of the model."""
-        return np.zeros(2 * self.nmodes)
-
-    def linear(self, u: Vector) -> Vector:
-        return freq_to_space(self._linear_factor * space_to_freq(u))
-
-    def bilinear(self, u: Vector, v: Vector) -> Vector:
-        # symmetrized bilinear term
-        # B(u, v) = -1/2 (u_x v + u v_x), s.t. B(u, v) = B(v, u) and B(u, u) = -uu_x
-        bilinear_output_udv = np.zeros(2 * self.nmodes, dtype=complex)
-        bilinear_output_vdu = np.zeros(2 * self.nmodes, dtype=complex)
-
-        state_u = space_to_freq(u)
-        state_v = space_to_freq(v)
-
-        for p in range(2 * self.nmodes):
-            p_freq = self.mode_index[p]
-            for m in range(2 * self.nmodes):
-                m_freq = self.mode_index[m]
-                n_freq = p_freq - m_freq
-                n = n_freq + self.nmodes
-                if n_freq <= self.nmodes - 1 and n_freq >= -self.nmodes:
-                    bilinear_output_udv[p] += - self._deriv_factor[m] * state_u[n] * state_v[m]
-                    bilinear_output_vdu[p] += - self._deriv_factor[m] * state_v[n] * state_u[m]
-
-        bilinear_output_udv[0] = 0  # ensure the Nyquist frequency mode is always zero to keep the solution real-valued
-        bilinear_output_vdu[0] = 0
-
-        bilinear_output = (bilinear_output_udv + bilinear_output_vdu) / 2
-
-        return freq_to_space(bilinear_output)
-
-    def nonlinear(self, u: Vector) -> Vector:
-        return self.constant + self.bilinear(u, u)
-    
-    def rhs(self, u: Vector) -> Vector:
-        """Return the right-hand side of the Kuramoto-Sivashinsky equation."""
-        return self.linear(u) + self.nonlinear(u)

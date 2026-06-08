@@ -1,0 +1,10 @@
+{
+    "pythonPath": "/usr/local/bin/python3",
+    "extraPaths": ["src"],
+    "reportMissingTypeStubs": "none",
+    "reportUnknownMemberType": "none",
+    "reportUnknownArgumentType": "none",
+    "reportUnknownVariableType": "none",
+    "reportUnknownParameterType": "none",
+    "useLibraryCodeForTypes": true
+}

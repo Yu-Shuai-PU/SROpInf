@@ -1,4 +1,7 @@
+# Runtime dependencies for SROpInf, pinned to the versions used for the paper experiments.
+# (See pyproject.toml for the minimum-version constraints; this file pins exact versions
+#  for reproducibility. Tested with Python 3.13.)
 numpy==2.3.2
 scipy==1.16.1
-matplotlib==3.10.3
-torch==2.7.1
+matplotlib==3.10.6
+tqdm==4.67.1

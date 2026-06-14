@@ -80,32 +80,36 @@ class DataConfig:
         elif self.type_traj_training == "perturbed_solutions":
             self.random_seed_training = 2000
             self.random_seed_testing = 523
-            self.num_traj_training = 20
-            self.num_traj_testing = 11 # 11 is good for plotting the box plots
-            self.shift_speed_denom_threshold = 1e-1 * 0.0 # 1e-1 or 0, these are 2 cases for comparison
+            self.num_traj_training = 10
+            self.num_traj_testing = 30
+            self.shift_speed_denom_threshold = 0.1 * 0.0 # 1e-1 or 0, these are 2 cases for comparison
             self.rom_state_norm_threshold = 1e2
             self.rom_solve_wall_time_limit = 10.0
     
 @dataclass
 class TrainingConfig: 
     """We are going to determine the dimension of this preliminary subspace via the diagram of singular value decay"""
-    pod_energy_threshold: float = 1.0 - 1e-6
-    # pod_energy_threshold: float = 1.0 - 1e-4
+    # pod_energy_threshold: float = 1.0 - 1e-6
+    pod_energy_threshold: float = 1.0 - 1e-4 # for the base solution case
     training_perturbation_to_benchmark_ratio: float = 0.1
-    testing_perturbation_to_benchmark_ratio: float = 0.20 # (12, 14, 16, 18, 20)
+    testing_perturbation_to_benchmark_ratio: float = 0.15 # (12, 13, 14, 15, 16)
     opinf_CV_random_seed: int = 42
     
     # for base solution case, the optimal regularizers from grid search is:
     # (lambda_poly, lambda_dcdt_numer) = (1.56e-1, 6.90e-6)
+    # for the multiple-solutions case (10 training trajectories), r = 20, the optimal regularizers from grid search is:
+    # (lambda_poly, lambda_dcdt_numer) = (1e-13, 1e-7)
     
+    # opinf_penalty_weight_rhs_poly: List[float] = field(default_factory=lambda: list(np.logspace(-14, 3, 18, endpoint=True)))
+    # opinf_penalty_weight_dcdt_numer: List[float] = field(default_factory=lambda: list(np.logspace(-14, 3, 18, endpoint=True)))
     # opinf_regularizer_rhs_poly: List[float] = field(default_factory=lambda: list(np.linspace(120e-4, 140e-4, 21, endpoint=True)))
     # opinf_regularizer_dcdt_numer: List[float] = field(default_factory=lambda: list(np.linspace(110e-3, 130e-3, 21, endpoint=True)))
     # opinf_penalty_weight_rhs_poly: float = 1.56e-1
     # opinf_penalty_weight_dcdt_numer: float = 6.90e-6
-    opinf_penalty_weight_rhs_poly: float = 1.30e-2
-    opinf_penalty_weight_dcdt_numer: float = 1.24e-1
+    opinf_penalty_weight_rhs_poly: float = 1e-13
+    opinf_penalty_weight_dcdt_numer: float = 1e-7
     
-    r: int = 1000 # tentative dimension before running POD
+    r: int = 20 # for the multiple-solutions case
     poly_comp: List[int] = field(default_factory=lambda: [1, 2])
     
 # ---------------------------------------------------------------------------

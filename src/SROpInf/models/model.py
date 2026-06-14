@@ -408,15 +408,19 @@ class SymmetryReducedScaledReducedOrderModel:
         e.g., benchmark_list = ["fom", "podgal"]
         """
         try:
-            sol = solve_ivp(
-                fun = self.rhs_zc,
-                t_span = (t_eval[0], t_eval[-1]),
-                y0 = y0,
-                method = 'Radau',
-                t_eval = t_eval,
-                rtol = 1e-3, # default value
-                atol = 1e-6 # default value
-            )
+            # Radau estimates its Jacobian by finite differences; near-zero tail POD modes drive
+            # num_jac's adaptive step factor to overflow -- harmless to the solution, which is
+            # error-controlled independently. Silence only that overflow; leave invalid/divide visible.
+            with np.errstate(over="ignore"):
+                sol = solve_ivp(
+                    fun = self.rhs_zc,
+                    t_span = (t_eval[0], t_eval[-1]),
+                    y0 = y0,
+                    method = 'Radau',
+                    t_eval = t_eval,
+                    rtol = 1e-3, # default value
+                    atol = 1e-6 # default value
+                )
         except (ValueError, FloatingPointError, ArithmeticError) as e:
             print(
                 f"Traj {idx_traj}: sample_and_compare raised {type(e).__name__}: {e}. "
@@ -504,15 +508,19 @@ class SymmetryReducedScaledReducedOrderModel:
     def solve(self, z0: Vector, c0: float, t_eval: Vector):
         y0 = np.hstack([z0, c0])
         try:
-            sol = solve_ivp(
-                fun = self.rhs_zc,
-                t_span = (t_eval[0], t_eval[-1]),
-                y0 = y0,
-                method = 'Radau',
-                t_eval = t_eval,
-                rtol = 1e-3, # default value
-                atol = 1e-6 # default value
-            )
+            # Radau estimates its Jacobian by finite differences; near-zero tail POD modes drive
+            # num_jac's adaptive step factor to overflow -- harmless to the solution, which is
+            # error-controlled independently. Silence only that overflow; leave invalid/divide visible.
+            with np.errstate(over="ignore"):
+                sol = solve_ivp(
+                    fun = self.rhs_zc,
+                    t_span = (t_eval[0], t_eval[-1]),
+                    y0 = y0,
+                    method = 'Radau',
+                    t_eval = t_eval,
+                    rtol = 1e-3, # default value
+                    atol = 1e-6 # default value
+                )
         except (ValueError, FloatingPointError, ArithmeticError) as e:
             sol = SimpleNamespace(
                 y=np.full((y0.shape[0], len(t_eval)), np.nan),

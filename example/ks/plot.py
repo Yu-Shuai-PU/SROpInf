@@ -2,10 +2,33 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.interpolate import interp1d
 from matplotlib.ticker import PercentFormatter, FuncFormatter
+from matplotlib.colors import to_rgb
 
 from typing import Any, Dict, List, Callable, Union
 from SROpInf.typing import Vector, Matrix
 from SROpInf.grids.grid1d import Grid1DUniformSpectral, Grid1DCubicSpline, fft
+
+def _on_white(color, alpha: float):
+    """Pre-blend `color` at opacity `alpha` over a white background. The PostScript/EPS backend
+    does not support transparency (alpha-carrying artists are rendered fully opaque), so any
+    translucent fill must be baked into the equivalent solid color before saving to .eps."""
+    r, g, b = to_rgb(color)
+    return (1 - alpha * (1 - r), 1 - alpha * (1 - g), 1 - alpha * (1 - b))
+
+def _spectral_upsample_field(Q: Matrix, nx_plot: int) -> Matrix:
+    """Fourier zero-pad a periodic real field Q (shape (nx, nt)) along the space axis up to nx_plot
+    points: lossless for a spectrally-resolved solution (its Fourier content is unchanged, only the
+    plotting grid is refined), so it removes the faceting a coarse-nx contourf shows without altering
+    the data. The rfft is per-column, so NaN-padded columns of a diverged ROM stay NaN. Returns Q
+    unchanged when nx_plot is None or nx_plot <= nx. The (nx_plot/nx) factor offsets irfft's 1/n
+    normalization so amplitudes are preserved."""
+    nx = Q.shape[0]
+    if nx_plot is None or nx_plot <= nx:
+        return Q
+    Uhat = np.fft.rfft(Q, axis=0)
+    pad = np.zeros((nx_plot // 2 + 1, Q.shape[1]), dtype=complex)
+    pad[:Uhat.shape[0]] = Uhat
+    return np.fft.irfft(pad, n=nx_plot, axis=0) * (nx_plot / nx)
 
 def _interp_time_valid(t_src: Vector, arr: np.ndarray, t_query: Vector, kind: str = "cubic") -> np.ndarray:
     """Interpolate `arr` (shape (n_state, n_t) or (n_t,)) from `t_src` onto `t_query` along the time
@@ -40,9 +63,17 @@ def plot_traj_contourf_xt(
     model_name_rom: str,
     model_abbrev_rom: str,
     fig_path: str,
-    idx_traj: int
+    idx_traj: int,
+    nx_plot: int = 256
 ):
-    
+    # Fourier zero-pad the space axis to nx_plot points so a coarse-nx field renders with smooth
+    # contourf edges instead of facets (lossless for the spectral solution); no-op when nx >= nx_plot.
+    if nx_plot is not None and Q_fom.shape[0] < nx_plot:
+        Lx = x[-1] + (x[1] - x[0])
+        x = np.linspace(0.0, Lx, nx_plot, endpoint=False)
+        Q_fom = _spectral_upsample_field(Q_fom, nx_plot)
+        Q_rom = _spectral_upsample_field(Q_rom, nx_plot)
+
     # Symmetric colour limits rounded UP to an integer so the colorbar limits/ticks are integers
     # (nan-aware: a blown-up ROM is NaN-padded past divergence); shared across the FOM / ROM /
     # difference panels so the three are directly comparable.
@@ -69,8 +100,8 @@ def plot_traj_contourf_xt(
     plt.xlim(0, Lx)
     plt.tick_params(labelsize=16)
     plt.tight_layout()
-    plt.savefig(fig_path + f"traj_{idx_traj:03d}_fom.png")
-    plt.savefig(fig_path + f"traj_{idx_traj:03d}_fom.eps")
+    plt.savefig(fig_path + f"traj_{idx_traj:03d}_fom.png", dpi=300)
+    plt.savefig(fig_path + f"traj_{idx_traj:03d}_fom.eps", dpi=300)
     plt.close()
 
     plt.figure(figsize=(10, 6))
@@ -85,8 +116,8 @@ def plot_traj_contourf_xt(
     plt.xlim(0, Lx)
     plt.tick_params(labelsize=16)
     plt.tight_layout()
-    plt.savefig(fig_path + f"traj_{idx_traj:03d}_{model_abbrev_rom}.png")
-    plt.savefig(fig_path + f"traj_{idx_traj:03d}_{model_abbrev_rom}.eps")
+    plt.savefig(fig_path + f"traj_{idx_traj:03d}_{model_abbrev_rom}.png", dpi=300)
+    plt.savefig(fig_path + f"traj_{idx_traj:03d}_{model_abbrev_rom}.eps", dpi=300)
     plt.close()
 
     plt.figure(figsize=(10, 6))
@@ -100,7 +131,7 @@ def plot_traj_contourf_xt(
     plt.xlim(0, Lx)
     plt.tick_params(labelsize=16)
     plt.tight_layout()
-    plt.savefig(fig_path + f"traj_{idx_traj:03d}_diff_fom_{model_abbrev_rom}.png")
+    plt.savefig(fig_path + f"traj_{idx_traj:03d}_diff_fom_{model_abbrev_rom}.png", dpi=300)
     plt.close()
 
 def plot_traj_x(
@@ -134,7 +165,7 @@ def plot_traj_x(
         plt.tick_params(labelsize=16)
         plt.legend(loc = "upper right", fontsize=16)
         plt.tight_layout()
-        plt.savefig(fig_path + f"traj_{idx_traj:03d}_t_{int(t[idx_time])}.png")
+        plt.savefig(fig_path + f"traj_{idx_traj:03d}_t_{int(t[idx_time])}.png", dpi=300)
         plt.close()
     
 def plot_shift_t(
@@ -159,8 +190,9 @@ def plot_shift_t(
     # plt.xlabel(r"$t$", fontsize=20)
     # plt.ylabel(r"$c(t)$", fontsize=20)
     plt.tick_params(labelsize=16)                    
-    plt.grid(True, alpha=0.3)
-    plt.legend(loc="upper right", fontsize=16)
+    plt.grid(True, color=_on_white("#b0b0b0", 0.3))
+    # framealpha=1: the default 0.8 legend frame is a transparent artist the EPS backend cannot render
+    plt.legend(loc="upper right", fontsize=16, framealpha=1.0)
     plt.tight_layout()
     plt.savefig(fig_path + f"shift_amount_{idx_traj:03d}.png", dpi=300)
     plt.savefig(fig_path + f"shift_amount_{idx_traj:03d}.eps", dpi=300)
@@ -175,7 +207,7 @@ def plot_shift_t(
     plt.title(rf"Trajectory {idx_traj:03d} inverse shift speed denominator $1/D$ (log-scaled) over time")
     plt.legend(loc = "upper right")
     plt.tight_layout()
-    plt.savefig(fig_path + f"inv_shift_speed_denom_{idx_traj:03d}_log_scaled.png")
+    plt.savefig(fig_path + f"inv_shift_speed_denom_{idx_traj:03d}_log_scaled.png", dpi=300)
     plt.close()
 
 def plot_error_phase_amplitude_t(
@@ -282,7 +314,7 @@ def plot_error_phase_amplitude_t(
             plt.tick_params(labelsize=16)
             plt.legend(loc="upper left", fontsize=16)
             plt.tight_layout()
-            plt.savefig(fig_path + f"{fname_prefix}_{model_abbrev_list[m]}_{idx_traj:03d}.png")
+            plt.savefig(fig_path + f"{fname_prefix}_{model_abbrev_list[m]}_{idx_traj:03d}.png", dpi=300)
             plt.close()
 
     # (1) raw snapshots -> phase band = lab-frame phase error (location + shape);
@@ -450,13 +482,19 @@ def plot_cumulative_rRMSE_band_t(
         lo = np.min(curves, axis=0)
         hi = np.max(curves, axis=0)
         mean = np.mean(curves, axis=0)
-        band = plt.fill_between(tsave, lo, hi, color=color_list[m], alpha=0.2, linewidth=0,
+        # bands carry a solid pre-blended color (EPS renders alpha as opaque) and sit at zorder=1,
+        # below the mean lines at zorder=3 -- otherwise a later band occludes an earlier mean line
+        band = plt.fill_between(tsave, lo, hi, color=_on_white(color_list[m], 0.2), linewidth=0, zorder=1,
                                 label=f"{name} ([min, max]; {n_div}/{num_traj} diverged)" if n_div else f"{name} ([min, max])")
-        line, = plt.plot(tsave, mean, color=color_list[m], lw=2,
+        # thin min/max boundary lines (zorder=2) so each band's extent stays readable even where a
+        # later, opaque (EPS-safe) band overlaps and hides its fill
+        plt.plot(tsave, lo, color=color_list[m], lw=0.8, zorder=2)
+        plt.plot(tsave, hi, color=color_list[m], lw=0.8, zorder=2)
+        line, = plt.plot(tsave, mean, color=color_list[m], lw=2, zorder=3,
                          label=f"{name} (mean; {n_div}/{num_traj} diverged)" if n_div else f"{name} (mean)")
         legend_handles += [line, band]
     plt.yscale("log")                     # log y: early small-error ramp and the ~1 (100%) tail both legible
-    plt.ylim(1e-3, 1e1)                   # fixed decade range (1e-3..1e1) so every band figure is comparable
+    plt.ylim(1e-4, 1e1)                   # fixed decade range (1e-4..1e1) so every band figure is comparable
     plt.gca().yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v*100:g}%"))  # 0.1% 1% 10% 100% 1000%
     # plt.xlabel(r"$t$", fontsize=20)
     # plt.ylabel("cumulative relative RMSE", fontsize=20)
@@ -464,7 +502,8 @@ def plot_cumulative_rRMSE_band_t(
     plt.xlim(tsave[0], tsave[-1])
     plt.tick_params(labelsize=16)
     # legend per model: solid line = mean, matching shaded band = [min, max] over trajectories
-    plt.legend(handles=legend_handles, loc="lower right", fontsize=16)
+    # framealpha=1: the default 0.8 is a transparent artist, which the EPS backend cannot render
+    plt.legend(handles=legend_handles, loc="upper left", fontsize=12, framealpha=1.0)
     plt.tight_layout()
     plt.savefig(fig_path + f"cumulative_rrmse_band_{dataset_label}.png", dpi=300)
     plt.savefig(fig_path + f"cumulative_rrmse_band_{dataset_label}.eps", dpi=300)
